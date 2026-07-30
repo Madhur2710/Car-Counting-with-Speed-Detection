@@ -1,0 +1,10 @@
+names:
+- Car
+- Motorcycle
+- Bus
+- Truck
+- Other
+nc: 5
+test: D:\Madhur\Vehicle Estimation Steamlit\artifacts\data_ingestion\feature_store\test\images
+train: D:\Madhur\Vehicle Estimation Steamlit\artifacts\data_ingestion\feature_store\train\images
+val: D:\Madhur\Vehicle Estimation Steamlit\artifacts\data_ingestion\feature_store\valid\images
