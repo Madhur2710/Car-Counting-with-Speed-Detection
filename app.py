@@ -985,9 +985,3 @@ else:
 
 # Footer
 st.markdown("---")
-st.markdown("""
-<div style="text-align: center;">
-    <p>Developed with ❤️ using YOLOv8, Supervision, and Streamlit</p>
-    <p>© 2025 Vehicle Detection, Tracking, Counting, and Speed Estimation</p>
-</div>
-""", unsafe_allow_html=True)
