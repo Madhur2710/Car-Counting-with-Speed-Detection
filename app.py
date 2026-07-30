@@ -208,6 +208,79 @@ with st.sidebar.expander("Region of Interest (ROI) Settings", expanded=True):
                                       [[int(p[0]*0.3), int(p[1]*0.3)] for p in st.session_state.roi_points])
                 roi_preview_rgb = cv2.cvtColor(roi_preview, cv2.COLOR_BGR2RGB)
                 st.image(roi_preview_rgb, caption="ROI Preview", use_container_width=True)
+
+            # Real-world calibration is required for accurate speed. Pixel
+            # dimensions alone carry no information about real-world scale.
+            st.markdown("#### Speed Calibration (required for accurate speed)")
+            st.caption(
+                "Speed needs to know the real-world scale of your ROI. Instead of "
+                "guessing the full ROI's real size, measure ONE known reference "
+                "distance visible in the frame (a car's length, or a standard "
+                "lane-marking dash+gap cycle) and the app derives the rest."
+            )
+
+            calibration_mode = st.radio(
+                "Calibration method",
+                ["Reference distance (recommended)", "Enter ROI size manually"],
+                key="calibration_mode",
+                help=(
+                    "Reference distance: click two points a known real distance apart "
+                    "(e.g. a car's bumper-to-bumper length, or lane-marking dash+gap "
+                    "spacing) and enter that distance. Manual: directly enter the "
+                    "real-world width/length the whole ROI covers (harder to estimate "
+                    "accurately)."
+                )
+            )
+
+            if calibration_mode == "Reference distance (recommended)":
+                st.caption(
+                    "Coordinates are pixel positions in the original video frame "
+                    "(see 'Frame dimensions' under ROI point selection below)."
+                )
+
+                st.markdown("**Length reference** (two points along the road, "
+                             "i.e. near→far, e.g. front and back bumper of one car, "
+                             "or two dashes of a lane marking a known number of "
+                             "cycles apart)")
+                lc1, lc2 = st.columns(2)
+                with lc1:
+                    st.session_state.len_ref_ax = st.number_input("Point A - X", value=st.session_state.get("len_ref_ax", 0), step=1, key="len_ax")
+                    st.session_state.len_ref_ay = st.number_input("Point A - Y", value=st.session_state.get("len_ref_ay", 0), step=1, key="len_ay")
+                with lc2:
+                    st.session_state.len_ref_bx = st.number_input("Point B - X", value=st.session_state.get("len_ref_bx", 0), step=1, key="len_bx")
+                    st.session_state.len_ref_by = st.number_input("Point B - Y", value=st.session_state.get("len_ref_by", 0), step=1, key="len_by")
+                st.session_state.len_ref_m = st.number_input(
+                    "Real-world distance between Point A and Point B (meters)",
+                    min_value=0.01, value=st.session_state.get("len_ref_m", 4.5), step=0.1,
+                    help="e.g. 4.5m for an average sedan's length, or a lane-marking "
+                         "dash+gap cycle length if you're spanning known marking segments"
+                )
+
+                st.markdown("**Width reference** (two points across the road, "
+                             "e.g. left and right edge of one lane, or a car's width)")
+                wc1, wc2 = st.columns(2)
+                with wc1:
+                    st.session_state.wid_ref_ax = st.number_input("Point A - X", value=st.session_state.get("wid_ref_ax", 0), step=1, key="wid_ax")
+                    st.session_state.wid_ref_ay = st.number_input("Point A - Y", value=st.session_state.get("wid_ref_ay", 0), step=1, key="wid_ay")
+                with wc2:
+                    st.session_state.wid_ref_bx = st.number_input("Point B - X", value=st.session_state.get("wid_ref_bx", 0), step=1, key="wid_bx")
+                    st.session_state.wid_ref_by = st.number_input("Point B - Y", value=st.session_state.get("wid_ref_by", 0), step=1, key="wid_by")
+                st.session_state.wid_ref_m = st.number_input(
+                    "Real-world distance between Point A and Point B (meters)",
+                    min_value=0.01, value=st.session_state.get("wid_ref_m", 3.5), step=0.1,
+                    help="e.g. 3.5m for one standard lane width, or a car's width (~1.8m)"
+                )
+            else:
+                st.session_state.roi_real_width_m = st.number_input(
+                    "Real-world width of ROI (meters)",
+                    min_value=0.1, value=st.session_state.get("roi_real_width_m", 3.5), step=0.1,
+                    help="e.g. width of the lane(s) covered by your ROI"
+                )
+                st.session_state.roi_real_length_m = st.number_input(
+                    "Real-world length of ROI (meters)",
+                    min_value=0.1, value=st.session_state.get("roi_real_length_m", 40.0), step=1.0,
+                    help="e.g. distance along the road covered by your ROI, top edge to bottom edge"
+                )
         else:
             st.warning("No ROI points defined yet. Click 'Define ROI' below the video to set up your custom ROI.")
     else:
@@ -388,46 +461,27 @@ def process_video(video_path, progress_bar, status_text):
     # Set up view transformer for speed estimation
     # For custom ROI, we'll use the same points for source and a scaled version for target
     if st.session_state.custom_roi and len(st.session_state.roi_points) >= 3:
-        # Create a scaled version of the ROI for the target (bird's eye view)
-        # This is a simple scaling approach - you might want to adjust this based on your needs
         source_points = np.array(st.session_state.roi_points)
-        
-        # Calculate bounding box of the ROI
-        min_x = np.min(source_points[:, 0])
-        max_x = np.max(source_points[:, 0])
-        min_y = np.min(source_points[:, 1])
-        max_y = np.max(source_points[:, 1])
-        
-        # Create a rectangular target with the same aspect ratio
-        width = max_x - min_x
-        height = max_y - min_y
-        scale = 10  # Scale factor for the bird's eye view
-        
-        # Create target points (rectangular bird's eye view)
-        target_points = np.array([
-            [0, 0],
-            [width * scale, 0],
-            [width * scale, height * scale],
-            [0, height * scale]
-        ])
-        
-        # If we have more than 4 points in the source, we need to adjust
+
+        # Normalize source polygon down to 4 corner points first, since both
+        # the reference-distance calibration below and the final transform
+        # need a consistent quadrilateral to work with.
         if len(source_points) > 4:
             # Use the 4 corner points of the convex hull
             from scipy.spatial import ConvexHull
             hull = ConvexHull(source_points)
             hull_points = source_points[hull.vertices]
-            
+
             # Get the 4 extreme points (top-left, top-right, bottom-right, bottom-left)
             # Sort by y first, then by x
             top_points = hull_points[hull_points[:, 1].argsort()][:2]
             bottom_points = hull_points[hull_points[:, 1].argsort()][-2:]
-            
+
             # Sort top points by x
             top_points = top_points[top_points[:, 0].argsort()]
             # Sort bottom points by x (reversed)
             bottom_points = bottom_points[bottom_points[:, 0].argsort()[::-1]]
-            
+
             # Combine points in the order: top-left, top-right, bottom-right, bottom-left
             source_points = np.vstack([top_points, bottom_points])
         elif len(source_points) < 4:
@@ -436,7 +490,69 @@ def process_video(video_path, progress_bar, status_text):
                 # Calculate the 4th point to form a parallelogram
                 fourth_point = source_points[0] + (source_points[2] - source_points[1])
                 source_points = np.vstack([source_points, [fourth_point]])
-        
+
+        # IMPORTANT: speed is derived from distance traveled in the target
+        # (bird's-eye) coordinate system, and calculate_speed() treats those
+        # units directly as meters. Pixel dimensions of the ROI carry no
+        # real-world scale information, so the target rectangle must be
+        # sized in actual meters -- either entered directly, or derived
+        # below from a known reference distance in the frame.
+        if st.session_state.get("calibration_mode") == "Reference distance (recommended)":
+            # Key insight: for a homography H mapping a quad to an axis-aligned
+            # rectangle, scaling that rectangle's width/height by (W, L) is
+            # exactly equivalent to post-scaling H's output by (W, L) --
+            # scaling commutes with the homogeneous-coordinate division.
+            # So we build a throwaway unit-square (1x1) transform, map our
+            # two reference-point pairs through it, and the known real
+            # distance divided by the transformed (unit-space) distance
+            # gives us the real width/length directly, with no need to
+            # measure the full ROI.
+            placeholder_target = np.array([[0, 0], [1, 0], [1, 1], [0, 1]])
+            placeholder_transformer = ViewTransformer(source=source_points, target=placeholder_target)
+
+            length_pts = np.array([
+                [st.session_state.get("len_ref_ax", 0), st.session_state.get("len_ref_ay", 0)],
+                [st.session_state.get("len_ref_bx", 0), st.session_state.get("len_ref_by", 0)],
+            ])
+            width_pts = np.array([
+                [st.session_state.get("wid_ref_ax", 0), st.session_state.get("wid_ref_ay", 0)],
+                [st.session_state.get("wid_ref_bx", 0), st.session_state.get("wid_ref_by", 0)],
+            ])
+
+            length_transformed = placeholder_transformer.transform_points(points=length_pts)
+            width_transformed = placeholder_transformer.transform_points(points=width_pts)
+
+            length_unit_dist = np.linalg.norm(length_transformed[1] - length_transformed[0]) if len(length_transformed) == 2 else 0
+            width_unit_dist = np.linalg.norm(width_transformed[1] - width_transformed[0]) if len(width_transformed) == 2 else 0
+
+            len_ref_m = st.session_state.get("len_ref_m", 4.5)
+            wid_ref_m = st.session_state.get("wid_ref_m", 3.5)
+
+            if length_unit_dist > 1e-6:
+                real_length_m = len_ref_m / length_unit_dist
+            else:
+                st.warning("Length reference points are identical (or outside the ROI) -- falling back to a default length.")
+                real_length_m = 40.0
+
+            if width_unit_dist > 1e-6:
+                real_width_m = wid_ref_m / width_unit_dist
+            else:
+                st.warning("Width reference points are identical (or outside the ROI) -- falling back to a default width.")
+                real_width_m = 3.5
+
+            st.caption(f"Derived ROI real-world size: {real_width_m:.2f}m wide x {real_length_m:.2f}m long")
+        else:
+            real_width_m = st.session_state.get("roi_real_width_m", 3.5)
+            real_length_m = st.session_state.get("roi_real_length_m", 40.0)
+
+        # Create target points (rectangular bird's-eye view, in meters)
+        target_points = np.array([
+            [0, 0],
+            [real_width_m, 0],
+            [real_width_m, real_length_m],
+            [0, real_length_m]
+        ])
+
         view_transformer = ViewTransformer(source=source_points, target=target_points)
     else:
         # Use default SOURCE and TARGET from settings
@@ -781,14 +897,25 @@ if uploaded_file is not None:
                 # Create a web-compatible version for browser playback
                 web_compatible_path = processed_video_path.replace('.mp4', '_web.mp4')
                 
-                # Check if ffmpeg is available
-                import shutil
-                ffmpeg_available = shutil.which('ffmpeg') is not None
-                
-                if ffmpeg_available:
+                # Locate an ffmpeg binary. Prefer imageio-ffmpeg's bundled
+                # static binary -- it ships as a pip dependency, so it works
+                # out of the box on any machine or host without needing
+                # ffmpeg separately installed or present on PATH (this is
+                # what was failing before: shutil.which('ffmpeg') only finds
+                # a *system* install, which is easy to miss/misconfigure
+                # locally and fragile on hosted deployments).
+                ffmpeg_path = None
+                try:
+                    import imageio_ffmpeg
+                    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+                except Exception:
+                    import shutil
+                    ffmpeg_path = shutil.which('ffmpeg')
+
+                if ffmpeg_path:
                     # Use ffmpeg if available
                     st.info("Converting video for web playback using ffmpeg...")
-                    ffmpeg_cmd = f'ffmpeg -y -i "{processed_video_path}" -vcodec libx264 -preset fast -crf 28 -acodec aac -strict experimental "{web_compatible_path}"'
+                    ffmpeg_cmd = f'"{ffmpeg_path}" -y -i "{processed_video_path}" -vcodec libx264 -preset fast -crf 28 -acodec aac -strict experimental "{web_compatible_path}"'
                     import subprocess
                     result = subprocess.run(ffmpeg_cmd, shell=True, capture_output=True, text=True)
                     
